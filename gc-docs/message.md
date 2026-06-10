@@ -147,3 +147,13 @@ export type Message = UserMessage | AssistantMessage | ToolResultMessage;
 - **`AgentState`**：会话级配置 + transcript + 对外只读的「是否在跑流 / 流式片段 / 挂起工具 / 错误」。
 - **`MutableAgentState`**：**同一状态树**，只是把上述 4 个运行字段改成内部可改的 `boolean` / 可选消息 / `Set` / 可选字符串。
 - **`AgentMessage`**：**User / Assistant / ToolResult**（pi-ai）与 **coding-agent 自定义四类**（及未来合并扩展）的**联合类型**。
+
+
+export interface AgentContext {
+	/** System prompt included with the request. */
+	systemPrompt: string;
+	/** Transcript visible to the model. */
+	messages: AgentMessage[];
+	/** Tools available for this run. */
+	tools?: AgentTool<any>[];
+}

@@ -1,16 +1,16 @@
 # @earendil-works/pi-agent-core
 
-[中文文档](README.zh-CN.md)
+[English](README.md)
 
-Stateful agent with tool execution and event streaming. Built on `@earendil-works/pi-ai`.
+带工具执行与事件流的有状态 Agent。基于 `@earendil-works/pi-ai` 构建。
 
-## Installation
+## 安装
 
 ```bash
 npm install @earendil-works/pi-agent-core
 ```
 
-## Quick Start
+## 快速开始
 
 ```typescript
 import { Agent } from "@earendil-works/pi-agent-core";
@@ -33,51 +33,52 @@ agent.subscribe((event) => {
 await agent.prompt("Hello!");
 ```
 
-## Core Concepts
+## 核心概念
 
-### AgentMessage vs LLM Message
+### AgentMessage 与 LLM Message
 
-The agent works with `AgentMessage`, a flexible type that can include:
-- Standard LLM messages (`user`, `assistant`, `toolResult`)
-- Custom app-specific message types via declaration merging
+Agent 使用 `AgentMessage`，一种可扩展的消息类型，可包含：
 
-LLMs only understand `user`, `assistant`, and `toolResult`. The `convertToLlm` function bridges this gap by filtering and transforming messages before each LLM call.
+- 标准 LLM 消息（`user`、`assistant`、`toolResult`）
+- 通过声明合并（declaration merging）扩展的应用自定义消息类型
 
-### Message Flow
+LLM 仅理解 `user`、`assistant` 和 `toolResult`。`convertToLlm` 在每次调用 LLM 前负责过滤与转换，弥合这一差异。
+
+### 消息流
 
 ```
 AgentMessage[] → transformContext() → AgentMessage[] → convertToLlm() → Message[] → LLM
-                    (optional)                           (required)
+                    (可选)                           (必需)
 ```
 
-1. **transformContext**: Prune old messages, inject external context
-2. **convertToLlm**: Filter out UI-only messages, convert custom types to LLM format
+1. **transformContext**：裁剪旧消息、注入外部上下文
+2. **convertToLlm**：过滤仅用于 UI 的消息，将自定义类型转为 LLM 格式
 
-## Event Flow
+## 事件流
 
-The agent emits events for UI updates. Understanding the event sequence helps build responsive interfaces.
+Agent 会发出事件供 UI 更新。理解事件顺序有助于构建响应式界面。
 
-### prompt() Event Sequence
+### prompt() 事件序列
 
-When you call `prompt("Hello")`:
+调用 `prompt("Hello")` 时：
 
 ```
 prompt("Hello")
 ├─ agent_start
 ├─ turn_start
-├─ message_start   { message: userMessage }      // Your prompt
+├─ message_start   { message: userMessage }      // 你的 prompt
 ├─ message_end     { message: userMessage }
-├─ message_start   { message: assistantMessage } // LLM starts responding
-├─ message_update  { message: partial... }       // Streaming chunks
+├─ message_start   { message: assistantMessage } // LLM 开始回复
+├─ message_update  { message: partial... }       // 流式片段
 ├─ message_update  { message: partial... }
-├─ message_end     { message: assistantMessage } // Complete response
+├─ message_end     { message: assistantMessage } // 完整回复
 ├─ turn_end        { message, toolResults: [] }
 └─ agent_end       { messages: [...] }
 ```
 
-### With Tool Calls
+### 含工具调用时
 
-If the assistant calls tools, the loop continues:
+若 assistant 调用工具，循环会继续：
 
 ```
 prompt("Read config.json")
@@ -88,33 +89,33 @@ prompt("Read config.json")
 ├─ message_update...
 ├─ message_end        { assistantMessage }
 ├─ tool_execution_start  { toolCallId, toolName, args }
-├─ tool_execution_update { partialResult }           // If tool streams
+├─ tool_execution_update { partialResult }           // 若工具支持流式
 ├─ tool_execution_end    { toolCallId, result }
 ├─ message_start/end  { toolResultMessage }
 ├─ turn_end           { message, toolResults: [toolResult] }
 │
-├─ turn_start                                        // Next turn
-├─ message_start      { assistantMessage }           // LLM responds to tool result
+├─ turn_start                                        // 下一回合
+├─ message_start      { assistantMessage }           // LLM 根据工具结果回复
 ├─ message_update...
 ├─ message_end
 ├─ turn_end
 └─ agent_end
 ```
 
-Tool execution mode is configurable:
+工具执行模式可配置：
 
-- `parallel` (default): preflight tool calls sequentially, execute allowed tools concurrently, emit `tool_execution_end` as soon as each tool is finalized, then emit toolResult messages and `turn_end.toolResults` in assistant source order
-- `sequential`: execute tool calls one by one, matching the historical behavior
+- `parallel`（默认）：预检（preflight）按顺序执行各工具调用，允许的工具并发执行；每个工具完成后立即发出 `tool_execution_end`，再按 assistant 源顺序发出 toolResult 消息与 `turn_end.toolResults`
+- `sequential`：逐个执行工具调用，与历史行为一致
 
-In parallel mode, tool completion events follow tool completion order, but persisted toolResult messages still follow assistant source order.
+并行模式下，工具完成事件按完成顺序发出，但持久化的 toolResult 消息仍按 assistant 源顺序排列。
 
-The mode can be set globally via `toolExecution` in the agent config, or per-tool via `executionMode` on `AgentTool`. If any tool call in a batch targets a tool with `executionMode: "sequential"`, the entire batch executes sequentially regardless of the global setting.
+可通过 Agent 配置中的 `toolExecution` 全局设置，或在 `AgentTool` 上用 `executionMode` 按工具设置。若一批调用中有任一工具为 `executionMode: "sequential"`，整批均按顺序执行，忽略全局设置。
 
-The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
+`beforeToolCall` 钩子在 `tool_execution_start` 且参数校验之后运行，可阻止执行。`afterToolCall` 在工具执行结束、发出 `tool_execution_end` 与最终 tool result 消息事件之前运行。
 
-Tools can also return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
+工具也可返回 `terminate: true`，提示跳过自动的后续 LLM 调用。仅当该批中每个已完成的工具结果都设置 `terminate: true` 时，循环才会提前结束；混合批次则照常继续。
 
-Low-level loop callers can set `shouldStopAfterTurn` to stop gracefully after the current turn completes:
+底层循环调用方可设置 `shouldStopAfterTurn`，在当前回合正常结束后优雅停止：
 
 ```typescript
 const stream = agentLoop(prompts, context, {
@@ -126,39 +127,39 @@ const stream = agentLoop(prompts, context, {
 });
 ```
 
-`shouldStopAfterTurn` runs after `turn_end` is emitted and after the assistant response and any tool executions have completed normally. If it returns `true`, the loop emits `agent_end` and exits before polling steering or follow-up queues, and before starting another LLM call. It does not abort the provider stream, does not cancel running tools, and does not alter the assistant message stop reason.
+`shouldStopAfterTurn` 在发出 `turn_end` 之后、assistant 回复与工具执行均正常完成之后运行。若返回 `true`，循环会发出 `agent_end` 并退出，不再轮询 steering 或 follow-up 队列，也不再发起新的 LLM 调用。它不会中止 provider 流、不会取消正在运行的工具，也不会改变 assistant 消息的 stop reason。
 
-When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
+使用 `Agent` 类时，assistant 的 `message_end` 处理在工具预检开始前作为屏障。因此 `beforeToolCall` 看到的 agent 状态已包含发起该工具调用的 assistant 消息。
 
-### continue() Event Sequence
+### continue() 事件序列
 
-`continue()` resumes from existing context without adding a new message. Use it for retries after errors.
+`continue()` 从现有上下文继续，不添加新消息。适用于出错后的重试。
 
 ```typescript
 // After an error, retry from current state
 await agent.continue();
 ```
 
-The last message in context must be `user` or `toolResult` (not `assistant`).
+上下文中最后一条消息必须是 `user` 或 `toolResult`（不能是 `assistant`）。
 
-### Event Types
+### 事件类型
 
-| Event | Description |
+| 事件 | 说明 |
 |-------|-------------|
-| `agent_start` | Agent begins processing |
-| `agent_end` | Final event for the run. Awaited subscribers for this event still count toward settlement |
-| `turn_start` | New turn begins (one LLM call + tool executions) |
-| `turn_end` | Turn completes with assistant message and tool results |
-| `message_start` | Any message begins (user, assistant, toolResult) |
-| `message_update` | **Assistant only.** Includes `assistantMessageEvent` with delta |
-| `message_end` | Message completes |
-| `tool_execution_start` | Tool begins |
-| `tool_execution_update` | Tool streams progress |
-| `tool_execution_end` | Tool completes |
+| `agent_start` | Agent 开始处理 |
+| `agent_end` | 本次运行的最终事件。对此事件的 awaited 订阅者仍计入结算 |
+| `turn_start` | 新回合开始（一次 LLM 调用 + 工具执行） |
+| `turn_end` | 回合结束，含 assistant 消息与工具结果 |
+| `message_start` | 任意消息开始（user、assistant、toolResult） |
+| `message_update` | **仅 assistant。** 含 `assistantMessageEvent` 与增量 |
+| `message_end` | 消息完成 |
+| `tool_execution_start` | 工具开始 |
+| `tool_execution_update` | 工具流式进度 |
+| `tool_execution_end` | 工具完成 |
 
-`Agent.subscribe()` listeners are awaited in registration order. `agent_end` means no more loop events will be emitted, but `await agent.waitForIdle()` and `await agent.prompt(...)` only settle after awaited `agent_end` listeners finish.
+`Agent.subscribe()` 的监听器按注册顺序 await。`agent_end` 表示不会再发出循环事件，但 `await agent.waitForIdle()` 与 `await agent.prompt(...)` 仅在 awaited 的 `agent_end` 监听器全部完成后才 settle。
 
-## Agent Options
+## Agent 选项
 
 ```typescript
 const agent = new Agent({
@@ -222,7 +223,7 @@ const agent = new Agent({
 });
 ```
 
-## Agent State
+## Agent 状态
 
 ```typescript
 interface AgentState {
@@ -238,17 +239,17 @@ interface AgentState {
 }
 ```
 
-Access state via `agent.state`.
+通过 `agent.state` 访问状态。
 
-Assigning `agent.state.tools = [...]` or `agent.state.messages = [...]` copies the top-level array before storing it. Mutating the returned array mutates the current agent state.
+对 `agent.state.tools = [...]` 或 `agent.state.messages = [...]` 赋值时，会先复制顶层数组再存储。若直接修改返回的数组引用，会改动当前 agent 状态。
 
-During streaming, `agent.state.streamingMessage` contains the current partial assistant message.
+流式输出期间，`agent.state.streamingMessage` 为当前未完成的 assistant 消息。
 
-`agent.state.isStreaming` remains `true` until the run fully settles, including awaited `agent_end` subscribers.
+`agent.state.isStreaming` 在运行完全 settle 前（含 awaited 的 `agent_end` 订阅者）保持为 `true`。
 
-## Methods
+## 方法
 
-### Prompting
+### 发起对话
 
 ```typescript
 // Text prompt
@@ -266,7 +267,7 @@ await agent.prompt({ role: "user", content: "Hello", timestamp: Date.now() });
 await agent.continue();
 ```
 
-### State Management
+### 状态管理
 
 ```typescript
 agent.state.systemPrompt = "New prompt";
@@ -281,7 +282,7 @@ agent.state.messages.push(message);
 agent.reset();
 ```
 
-### Session and Thinking Budgets
+### 会话与思考预算
 
 ```typescript
 agent.sessionId = "session-123";
@@ -294,14 +295,14 @@ agent.thinkingBudgets = {
 };
 ```
 
-### Control
+### 控制
 
 ```typescript
 agent.abort();           // Cancel current operation
 await agent.waitForIdle(); // Wait for completion
 ```
 
-### Events
+### 事件
 
 ```typescript
 const unsubscribe = agent.subscribe(async (event, signal) => {
@@ -313,9 +314,9 @@ const unsubscribe = agent.subscribe(async (event, signal) => {
 unsubscribe();
 ```
 
-## Steering and Follow-up
+## Steering 与 Follow-up
 
-Steering messages let you interrupt the agent while tools are running. Follow-up messages let you queue work after the agent would otherwise stop.
+Steering 消息可在工具运行期间打断 Agent。Follow-up 消息可在 Agent 本应停止时排队后续工作。
 
 ```typescript
 agent.steeringMode = "one-at-a-time";
@@ -343,18 +344,19 @@ agent.clearFollowUpQueue();
 agent.clearAllQueues();
 ```
 
-Use clearSteeringQueue, clearFollowUpQueue, or clearAllQueues to drop queued messages.
+使用 `clearSteeringQueue`、`clearFollowUpQueue` 或 `clearAllQueues` 清空队列中的消息。
 
-When steering messages are detected after a turn completes:
-1. All tool calls from the current assistant message have already finished
-2. Steering messages are injected
-3. The LLM responds on the next turn
+回合结束后若检测到 steering 消息：
 
-Follow-up messages are checked only when there are no more tool calls and no steering messages. If any are queued, they are injected and another turn runs.
+1. 当前 assistant 消息上的所有工具调用已完成
+2. 注入 steering 消息
+3. 下一回合由 LLM 响应
 
-## Custom Message Types
+Follow-up 仅在没有更多工具调用且没有 steering 消息时检查。若有排队消息则注入并再跑一回合。
 
-Extend `AgentMessage` via declaration merging:
+## 自定义消息类型
+
+通过声明合并扩展 `AgentMessage`：
 
 ```typescript
 declare module "@earendil-works/pi-agent-core" {
@@ -367,7 +369,7 @@ declare module "@earendil-works/pi-agent-core" {
 const msg: AgentMessage = { role: "notification", text: "Info", timestamp: Date.now() };
 ```
 
-Handle custom types in `convertToLlm`:
+在 `convertToLlm` 中处理自定义类型：
 
 ```typescript
 const agent = new Agent({
@@ -378,9 +380,9 @@ const agent = new Agent({
 });
 ```
 
-## Tools
+## 工具
 
-Define tools using `AgentTool`:
+使用 `AgentTool` 定义工具：
 
 ```typescript
 import { Type } from "typebox";
@@ -415,9 +417,9 @@ const readFileTool: AgentTool = {
 agent.state.tools = [readFileTool];
 ```
 
-### Error Handling
+### 错误处理
 
-**Throw an error** when a tool fails. Do not return error messages as content.
+工具失败时应 **抛出错误**，不要将错误信息作为 content 返回。
 
 ```typescript
 execute: async (toolCallId, params, signal, onUpdate) => {
@@ -429,13 +431,13 @@ execute: async (toolCallId, params, signal, onUpdate) => {
 }
 ```
 
-Thrown errors are caught by the agent and reported to the LLM as tool errors with `isError: true`.
+抛出的错误由 Agent 捕获，并以 `isError: true` 的形式作为工具错误报告给 LLM。
 
-Return `terminate: true` from `execute()` or `afterToolCall` to hint that the agent should stop after the current tool batch. This only takes effect when every finalized tool result in the batch is terminating. The hint is runtime-only; emitted `toolResult` transcript messages remain standard LLM tool results.
+在 `execute()` 或 `afterToolCall` 中返回 `terminate: true` 可提示 Agent 在当前工具批次后停止。仅当该批每个已完成的工具结果都终止时才生效。该提示仅运行时有效；发出的 `toolResult` 转录消息仍是标准 LLM 工具结果。
 
-## Proxy Usage
+## 代理（Proxy）用法
 
-For browser apps that proxy through a backend:
+适用于通过后端代理的浏览器应用：
 
 ```typescript
 import { Agent, streamProxy } from "@earendil-works/pi-agent-core";
@@ -450,9 +452,9 @@ const agent = new Agent({
 });
 ```
 
-## Low-Level API
+## 底层 API
 
-For direct control without the Agent class:
+无需 `Agent` 类、直接控制循环时：
 
 ```typescript
 import { agentLoop, agentLoopContinue } from "@earendil-works/pi-agent-core";
@@ -483,8 +485,8 @@ for await (const event of agentLoopContinue(context, config)) {
 }
 ```
 
-These low-level streams are observational. They preserve event order, but they do not wait for your async event handling to settle before later producer phases continue. If you need message processing to act as a barrier before tool preflight, use the `Agent` class instead of raw `agentLoop()` or `agentLoopContinue()`.
+这些底层流仅供观察：保持事件顺序，但不会等待你的异步事件处理完成再继续后续生产阶段。若需要在工具预检前以消息处理作为屏障，请使用 `Agent` 类，而非裸的 `agentLoop()` / `agentLoopContinue()`。
 
-## License
+## 许可证
 
 MIT
