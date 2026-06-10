@@ -1,9 +1,9 @@
-import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.js";
+import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.ts";
 
-export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
+export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
 	return {
 		temperature: options?.temperature,
-		maxTokens: options?.maxTokens ?? (model.maxTokens > 0 ? Math.min(model.maxTokens, 32000) : undefined),
+		maxTokens: options?.maxTokens,
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
 		transport: options?.transport,
@@ -13,6 +13,7 @@ export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOption
 		onPayload: options?.onPayload,
 		onResponse: options?.onResponse,
 		timeoutMs: options?.timeoutMs,
+		websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs,
 		maxRetries: options?.maxRetries,
 		maxRetryDelayMs: options?.maxRetryDelayMs,
 		metadata: options?.metadata,
@@ -24,7 +25,8 @@ export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<Think
 }
 
 export function adjustMaxTokensForThinking(
-	baseMaxTokens: number,
+	// Undefined means no explicit caller cap. Use the model cap and fit thinking inside it.
+	baseMaxTokens: number | undefined,
 	modelMaxTokens: number,
 	reasoningLevel: ThinkingLevel,
 	customBudgets?: ThinkingBudgets,
@@ -40,7 +42,8 @@ export function adjustMaxTokensForThinking(
 	const minOutputTokens = 1024;
 	const level = clampReasoning(reasoningLevel)!;
 	let thinkingBudget = budgets[level]!;
-	const maxTokens = Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
+	const maxTokens =
+		baseMaxTokens === undefined ? modelMaxTokens : Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
 
 	if (maxTokens <= thinkingBudget) {
 		thinkingBudget = Math.max(0, maxTokens - minOutputTokens);
