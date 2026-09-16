@@ -6,14 +6,16 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	type ProviderHeaders,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+
+import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 describe("createAgentSession provider attribution headers", () => {
 	let tempDir: string;
@@ -88,31 +90,28 @@ describe("createAgentSession provider attribution headers", () => {
 			requestHeaders?: Record<string, string>;
 			sessionId?: string;
 		} = {},
-	): Promise<Record<string, string> | undefined> {
+	): Promise<ProviderHeaders | undefined> {
 		const settingsManager = SettingsManager.create(cwd, agentDir);
 		if (options.telemetryEnabled === false) {
 			settingsManager.setEnableInstallTelemetry(false);
 		}
 
-		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
-		const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-		const registeredProviders = ["capture-provider"];
+		const authStorage = AuthStorage.inMemory({
+			[model.provider]: { type: "api_key", key: "test-api-key" },
+		});
+		const modelRegistry = await createInMemoryModelRegistry(authStorage);
 		let capturedOptions: SimpleStreamOptions | undefined;
 
-		modelRegistry.registerProvider("capture-provider", {
-			api: "openai-completions",
+		modelRegistry.registerProvider(model.provider, {
+			api: model.api,
+			headers: options.providerHeaders,
 			streamSimple: (_model, _context, providerOptions) => {
 				capturedOptions = providerOptions;
 				return createDoneStream();
 			},
 		});
 
-		if (options.providerHeaders) {
-			modelRegistry.registerProvider(model.provider, { headers: options.providerHeaders });
-			registeredProviders.push(model.provider);
-		}
-
+		const modelRuntime = getModelRuntime(modelRegistry);
 		const sessionManager = SessionManager.inMemory(cwd);
 		if (options.sessionId) {
 			sessionManager.newSession({ id: options.sessionId });
@@ -122,14 +121,13 @@ describe("createAgentSession provider attribution headers", () => {
 			cwd,
 			agentDir,
 			model,
-			authStorage,
-			modelRegistry,
+			modelRuntime,
 			settingsManager,
 			sessionManager,
 		});
 
 		try {
-			await session.agent.streamFn(
+			const stream = await session.agent.streamFunction(
 				model,
 				{ messages: [] },
 				{
@@ -137,12 +135,11 @@ describe("createAgentSession provider attribution headers", () => {
 					...(options.requestHeaders ? { headers: options.requestHeaders } : {}),
 				},
 			);
+			await stream.result();
 			return capturedOptions?.headers;
 		} finally {
 			session.dispose();
-			for (const provider of registeredProviders.reverse()) {
-				modelRegistry.unregisterProvider(provider);
-			}
+			modelRegistry.unregisterProvider(model.provider);
 		}
 	}
 
