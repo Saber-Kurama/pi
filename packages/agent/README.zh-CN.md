@@ -10,17 +10,28 @@
 npm install @earendil-works/pi-agent-core
 ```
 
+### SQLite 会话后端
+
+SQLite 会话后端与 `node:sqlite` 适配器放在独立包 `@earendil-works/pi-session-backend-sqlite-node` 中，这样核心包默认不会引入运行时内置模块或原生 SQLite 依赖。后端接受运行时相关的 SQLite factory，便于日后把其他会话后端做成独立包。
+
 ## 快速开始
 
 ```typescript
 import { Agent } from "@earendil-works/pi-agent-core";
-import { getModel } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+
+const models = createModels();
+models.setProvider(anthropicProvider());
+const model = models.getModel("anthropic", "claude-sonnet-4-6");
+if (!model) throw new Error("Model not found");
 
 const agent = new Agent({
   initialState: {
     systemPrompt: "You are a helpful assistant.",
-    model: getModel("anthropic", "claude-sonnet-4-20250514"),
+    model,
   },
+  streamFn: models.streamSimple.bind(models),
 });
 
 agent.subscribe((event) => {
@@ -111,23 +122,29 @@ prompt("Read config.json")
 
 可通过 Agent 配置中的 `toolExecution` 全局设置，或在 `AgentTool` 上用 `executionMode` 按工具设置。若一批调用中有任一工具为 `executionMode: "sequential"`，整批均按顺序执行，忽略全局设置。
 
-`beforeToolCall` 钩子在 `tool_execution_start` 且参数校验之后运行，可阻止执行。`afterToolCall` 在工具执行结束、发出 `tool_execution_end` 与最终 tool result 消息事件之前运行。
+`beforeToolCall` 钩子在 `tool_execution_start` 且参数校验之后运行，可阻止执行，并在被阻止的结果上附加 `terminate: true`。`afterToolCall` 在工具执行结束、发出 `tool_execution_end` 与最终 tool result 消息事件之前运行。
 
-工具也可返回 `terminate: true`，提示跳过自动的后续 LLM 调用。仅当该批中每个已完成的工具结果都设置 `terminate: true` 时，循环才会提前结束；混合批次则照常继续。
+工具、被阻止的 `beforeToolCall` 结果以及 `afterToolCall` 覆盖均可返回 `terminate: true`，提示跳过自动的后续 LLM 调用。仅当该批中每个已完成的工具结果都设置 `terminate: true` 时，循环才会提前结束；混合批次则照常继续。
 
-底层循环调用方可设置 `shouldStopAfterTurn`，在当前回合正常结束后优雅停止：
+`Agent` 类在 `AgentOptions` 中接受 `shouldStopAfterTurn`。底层循环调用方可在 `AgentLoopConfig` 中设置同一钩子：
 
 ```typescript
-const stream = agentLoop(prompts, context, {
-  model,
-  convertToLlm,
-  shouldStopAfterTurn: async ({ message, toolResults, context, newMessages }) => {
-    return shouldCompactBeforeNextTurn(context.messages);
+const stream = agentLoop(
+  prompts,
+  context,
+  {
+    model,
+    convertToLlm,
+    shouldStopAfterTurn: async ({ message, toolResults, context, newMessages }) => {
+      return shouldCompactBeforeNextTurn(context.messages);
+    },
   },
-});
+  undefined,
+  models.streamSimple.bind(models),
+);
 ```
 
-`shouldStopAfterTurn` 在发出 `turn_end` 之后、assistant 回复与工具执行均正常完成之后运行。若返回 `true`，循环会发出 `agent_end` 并退出，不再轮询 steering 或 follow-up 队列，也不再发起新的 LLM 调用。它不会中止 provider 流、不会取消正在运行的工具，也不会改变 assistant 消息的 stop reason。
+`shouldStopAfterTurn` 在发出 `turn_end` 之后、assistant 回复与工具执行均正常完成之后运行。若返回 `true`，循环会发出 `agent_end` 并退出，不再轮询 steering 或 follow-up 队列，也不再发起新的 LLM 调用。它不会中止 provider 流、不会取消正在运行的工具，也不会改变 assistant 消息的 stop reason。`AgentOptions` 中的回调还会把当前运行的 `AbortSignal` 作为第二个参数传入。
 
 使用 `Agent` 类时，assistant 的 `message_end` 处理在工具预检开始前作为屏障。因此 `beforeToolCall` 看到的 agent 状态已包含发起该工具调用的 assistant 消息。
 
@@ -167,7 +184,7 @@ const agent = new Agent({
   initialState: {
     systemPrompt: string,
     model: Model<any>,
-    thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh",
+    thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
     tools: AgentTool<any>[],
     messages: AgentMessage[],
   },
@@ -184,8 +201,8 @@ const agent = new Agent({
   // Follow-up mode: "one-at-a-time" (default) or "all"
   followUpMode: "one-at-a-time",
 
-  // Custom stream function (for proxy backends)
-  streamFn: streamProxy,
+  // Required stream function
+  streamFn: models.streamSimple.bind(models),
 
   // Session ID for provider caching
   sessionId: "session-123",
@@ -199,7 +216,7 @@ const agent = new Agent({
   // Preflight each tool call after args are validated. Can block execution.
   beforeToolCall: async ({ toolCall, args, context }) => {
     if (toolCall.name === "bash") {
-      return { block: true, reason: "bash is disabled" };
+      return { block: true, reason: "bash is disabled", terminate: true };
     }
   },
 
@@ -211,6 +228,11 @@ const agent = new Agent({
     if (!isError) {
       return { details: { ...result.details, audited: true } };
     }
+  },
+
+  // Stop gracefully after a completed turn, before queued messages are polled.
+  shouldStopAfterTurn: async ({ context }, signal) => {
+    return shouldCompactBeforeNextTurn(context.messages, signal);
   },
 
   // Custom thinking budgets for token-based providers
@@ -277,6 +299,7 @@ agent.state.tools = [myTool];
 agent.toolExecution = "sequential";
 agent.beforeToolCall = async ({ toolCall }) => undefined;
 agent.afterToolCall = async ({ toolCall, result }) => undefined;
+agent.shouldStopAfterTurn = async ({ context }) => shouldCompactBeforeNextTurn(context.messages);
 agent.state.messages = newMessages; // top-level array is copied
 agent.state.messages.push(message);
 agent.reset();
@@ -373,6 +396,7 @@ const msg: AgentMessage = { role: "notification", text: "Info", timestamp: Date.
 
 ```typescript
 const agent = new Agent({
+  streamFn: models.streamSimple.bind(models),
   convertToLlm: (messages) => messages.flatMap(m => {
     if (m.role === "notification") return []; // Filter out
     return [m];
@@ -433,7 +457,7 @@ execute: async (toolCallId, params, signal, onUpdate) => {
 
 抛出的错误由 Agent 捕获，并以 `isError: true` 的形式作为工具错误报告给 LLM。
 
-在 `execute()` 或 `afterToolCall` 中返回 `terminate: true` 可提示 Agent 在当前工具批次后停止。仅当该批每个已完成的工具结果都终止时才生效。该提示仅运行时有效；发出的 `toolResult` 转录消息仍是标准 LLM 工具结果。
+在 `execute()`、被阻止的 `beforeToolCall` 或 `afterToolCall` 中返回 `terminate: true` 可提示 Agent 在当前工具批次后停止。仅当该批每个已完成的工具结果都终止时才生效。该提示仅运行时有效；发出的 `toolResult` 转录消息仍是标准 LLM 工具结果。
 
 ## 代理（Proxy）用法
 
@@ -475,12 +499,13 @@ const config: AgentLoopConfig = {
 
 const userMessage = { role: "user", content: "Hello", timestamp: Date.now() };
 
-for await (const event of agentLoop([userMessage], context, config)) {
+const streamFn = models.streamSimple.bind(models);
+for await (const event of agentLoop([userMessage], context, config, undefined, streamFn)) {
   console.log(event.type);
 }
 
 // Continue from existing context
-for await (const event of agentLoopContinue(context, config)) {
+for await (const event of agentLoopContinue(context, config, undefined, streamFn)) {
   console.log(event.type);
 }
 ```
